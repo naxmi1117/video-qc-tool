@@ -1,0 +1,104 @@
+# video_qc_app.py
+import streamlit as st
+import cv2
+import numpy as np
+import subprocess
+import os
+import csv
+
+st.title("🎬 Video QC Tool")
+
+# Create folders if they don't exist
+os.makedirs("uploads", exist_ok=True)
+os.makedirs("reports", exist_ok=True)
+os.makedirs("thumbnails", exist_ok=True)
+
+# Upload video
+uploaded_file = st.file_uploader("Upload a video", type=["mp4", "mov", "mkv"])
+if uploaded_file:
+    video_path = os.path.join("uploads", uploaded_file.name)
+    with open(video_path, "wb") as f:
+        f.write(uploaded_file.getbuffer())
+    st.success(f"Uploaded: {uploaded_file.name}")
+
+    st.info("Scanning video...")
+    
+    # --- VIDEO QC ---
+    cap = cv2.VideoCapture(video_path)
+    fps = cap.get(cv2.CAP_PROP_FPS)
+    prev_frame = None
+    frame_count = 0
+    video_issues = []
+
+    while True:
+        ret, frame = cap.read()
+        if not ret:
+            break
+
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+
+        # Frozen frame detection
+        if prev_frame is not None:
+            diff = cv2.absdiff(prev_frame, gray)
+            score = np.mean(diff)
+            if score < 1:
+                timestamp = frame_count / fps
+                video_issues.append((timestamp, "Frozen frame"))
+                cv2.imwrite(f"thumbnails/frozen_{frame_count}.jpg", frame)
+            elif score > 50:
+                timestamp = frame_count / fps
+                video_issues.append((timestamp, "Video glitch"))
+                cv2.imwrite(f"thumbnails/glitch_{frame_count}.jpg", frame)
+
+        # Black frame detection
+        if np.mean(gray) < 10:
+            timestamp = frame_count / fps
+            video_issues.append((timestamp, "Black frame"))
+            cv2.imwrite(f"thumbnails/black_{frame_count}.jpg", frame)
+
+        prev_frame = gray
+        frame_count += 1
+
+    cap.release()
+
+    # --- AUDIO QC ---
+    audio_issues = []
+    cmd = [
+        "ffmpeg",
+        "-i", video_path,
+        "-af", "silencedetect=noise=-30dB:d=2",
+        "-f", "null",
+        "-"
+    ]
+    result = subprocess.run(cmd, stderr=subprocess.PIPE, text=True)
+    for line in result.stderr.split("\n"):
+        if "silence_start" in line:
+            start = float(line.strip().split("silence_start:")[1])
+            audio_issues.append((start, "Audio silence"))
+
+    # --- DISPLAY RESULTS ---
+    st.subheader("QC Report")
+    all_issues = video_issues + audio_issues
+    if all_issues:
+        for t, issue in all_issues:
+            minutes = int(t // 60)
+            seconds = int(t % 60)
+            st.write(f"{minutes:02d}:{seconds:02d} - {issue}")
+    else:
+        st.write("✅ No issues detected")
+
+    # --- SAVE CSV REPORT ---
+    report_file = os.path.join("reports", uploaded_file.name + "_QC_report.csv")
+    with open(report_file, "w", newline="") as f:
+        writer = csv.writer(f)
+        writer.writerow(["timestamp (s)", "issue"])
+        for t, issue in all_issues:
+            writer.writerow([f"{t:.2f}", issue])
+    st.success(f"QC report saved: {report_file}")
+
+    # --- SHOW THUMBNAILS ---
+    st.subheader("Problem Frame Thumbnails")
+    for t, issue in video_issues:
+        frame_file = f"thumbnails/{issue.lower().replace(' ', '_')}_{int(t*fps)}.jpg"
+        if os.path.exists(frame_file):
+            st.image(frame_file, caption=f"{issue} at {int(t//60):02d}:{int(t%60):02d}", use_column_width=True)

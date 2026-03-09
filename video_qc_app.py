@@ -14,7 +14,7 @@ os.makedirs("reports", exist_ok=True)
 os.makedirs("thumbnails", exist_ok=True)
 
 # Upload video
-uploaded_file = st.file_uploader("Upload a video", type=["mp4", "mov", "mkv"])
+uploaded_file = st.file_uploader("Upload a video (large files supported)", type=["mp4", "mov", "mkv", "mpg", "mpeg"])
 if uploaded_file:
     video_path = os.path.join("uploads", uploaded_file.name)
     with open(video_path, "wb") as f:
@@ -102,3 +102,4 @@ if uploaded_file:
         frame_file = f"thumbnails/{issue.lower().replace(' ', '_')}_{int(t*fps)}.jpg"
         if os.path.exists(frame_file):
             st.image(frame_file, caption=f"{issue} at {int(t//60):02d}:{int(t%60):02d}", use_column_width=True)
+
